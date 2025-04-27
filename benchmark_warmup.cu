@@ -290,30 +290,29 @@ void rowToColMajor(const float* row, float* col, int r, int c) {
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
-    // Read configuration from file "config.txt".
-    // The file should contain three numbers: n, max_levels, and k_rank (in that order).
-    int n = 0, max_levels = 0, fileKRank = 0;
-    std::ifstream configFile("config.txt");
-    if (!configFile) {
-        std::cerr << "Error: Could not open config.txt" << std::endl;
+    if (argc != 4) {
+        std::cerr << "Usage: " << argv[0] << " <n> <max_levels> <k_rank>\n";
         return 1;
     }
-    configFile >> n >> max_levels >> fileKRank;
+    int n           = std::stoi(argv[1]);
+    int max_levels  = std::stoi(argv[2]);
+    int fileKRank   = std::stoi(argv[3]);
     if (n <= 0 || max_levels <= 0 || fileKRank <= 0) {
-        std::cerr << "Error: Invalid configuration values." << std::endl;
+        std::cerr << "Error: All arguments must be positive integers.\n";
         return 1;
     }
     globalKRank = fileKRank;
-    std::cout << "Configuration:\n";
-    std::cout << "Matrix dimension n = " << n << "\n";
-    std::cout << "Max hierarchical levels = " << max_levels << "\n";
-    std::cout << "Low-rank approximation k_rank = " << globalKRank << "\n";
+
+    // std::cout << "Configuration:\n";
+    // std::cout << "Matrix dimension n = " << n << "\n";
+    // std::cout << "Max hierarchical levels = " << max_levels << "\n";
+    // std::cout << "Low-rank approximation k_rank = " << globalKRank << "\n";
     
     // Generate random matrix A.
-    std::cout << "Generating random " << n << "x" << n << " dense matrix A...\n";
+    // std::cout << "Generating random " << n << "x" << n << " dense matrix A...\n";
     std::vector<float> A = generateRandomMatrix(n);
 
     // Generate input vector x
@@ -329,8 +328,8 @@ int main() {
     std::vector<Block> dense_blocks;
     std::vector<Block> low_rank_blocks;
     compressHODLR(A, n, 0, 0, n, 0, max_levels, dense_blocks, low_rank_blocks, all_blocks);
-    std::cout << "HODLR compression complete; number of dense blocks: " << dense_blocks.size() << "\n";
-    std::cout << "HODLR compression complete; number of low-rank blocks: " << low_rank_blocks.size() << "\n";
+    // std::cout << "HODLR compression complete; number of dense blocks: " << dense_blocks.size() << "\n";
+    // std::cout << "HODLR compression complete; number of low-rank blocks: " << low_rank_blocks.size() << "\n";
 
     std::sort(
         low_rank_blocks.begin(),
@@ -353,9 +352,100 @@ int main() {
     std::vector<float> y_cpu = cpuMVM(A_dense, h_x, n);
     auto cpu_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::milli> cpu_time = cpu_end - cpu_start;
+
+    // ---------------------------
+    // cuBLAS SGEMV on A_dense
+    auto convertRowMajorToColMajor = [n](const std::vector<float>& A_rm) -> std::vector<float> {
+        std::vector<float> A_col(A_rm.size(), 0.0f);
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                A_col[j * n + i] = A_rm[i * n + j];
+            }
+        }
+        return A_col;
+    };
+    std::vector<float> A_dense_col = convertRowMajorToColMajor(A_dense);
+
+    cudaEvent_t startCUBLAS_total, stopCUBLAS_total;
+    CUDA_CHECK(cudaEventCreate(&startCUBLAS_total));
+    CUDA_CHECK(cudaEventCreate(&stopCUBLAS_total));
+    CUDA_CHECK(cudaEventRecord(startCUBLAS_total, 0));
+
+    // Allocate device memory for cuBLAS SGEMV.
+    float *d_A_cublas, *d_x_cublas, *d_y_cublas;
+    CUDA_CHECK(cudaMalloc((void**)&d_A_cublas, n * n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_x_cublas, n * sizeof(float)));
+    CUDA_CHECK(cudaMalloc((void**)&d_y_cublas, n * sizeof(float)));
+    CUDA_CHECK(cudaMemcpy(d_A_cublas, A_dense_col.data(), n * n * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_x_cublas, h_x.data(), n * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemset(d_y_cublas, 0, n * sizeof(float)));
+
+    // Create cuBLAS handle.
+    cublasHandle_t handle_dense;
+    cublasStatus_t stat = cublasCreate(&handle_dense);
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        std::cerr << "cuBLAS initialization failed" << std::endl;
+        return EXIT_FAILURE;
+    }
+    
+    float alpha_cublas = 1.0f, beta_cublas = 0.0f;
+    
+    // --- Warm Up Phase ---
+    int warmup_iterations = 5;
+    for (int i = 0; i < warmup_iterations; i++) {
+        stat = cublasSgemv(handle_dense, CUBLAS_OP_N, n, n, &alpha_cublas, d_A_cublas, n,
+                           d_x_cublas, 1, &beta_cublas, d_y_cublas, 1);
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            std::cerr << "cuBLAS sgemv warmup failed" << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    CUDA_CHECK(cudaDeviceSynchronize());
+    // Reset the output vector on device.
+    CUDA_CHECK(cudaMemset(d_y_cublas, 0, n * sizeof(float)));
+    
+    // --- Timing Phase ---
+    int test_iterations = 1;
+    cudaEvent_t startCUBLAS, stopCUBLAS;
+    CUDA_CHECK(cudaEventCreate(&startCUBLAS));
+    CUDA_CHECK(cudaEventCreate(&stopCUBLAS));
+    CUDA_CHECK(cudaEventRecord(startCUBLAS, 0));
+    for (int i = 0; i < test_iterations; i++) {
+        stat = cublasSgemv(handle_dense, CUBLAS_OP_N, n, n, &alpha_cublas, d_A_cublas, n,
+                           d_x_cublas, 1, &beta_cublas, d_y_cublas, 1);
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            std::cerr << "cuBLAS sgemv test iteration failed" << std::endl;
+            return EXIT_FAILURE;
+        }
+    }
+    CUDA_CHECK(cudaEventRecord(stopCUBLAS_total, 0));
+    CUDA_CHECK(cudaEventSynchronize(stopCUBLAS_total));
+    float dense_total_time;
+    CUDA_CHECK(cudaEventElapsedTime(&dense_total_time, startCUBLAS_total, stopCUBLAS_total));
+    dense_total_time /= test_iterations;
+
+    CUDA_CHECK(cudaEventRecord(stopCUBLAS, 0));
+    CUDA_CHECK(cudaEventSynchronize(stopCUBLAS));
+    float dense_exec_time;
+    CUDA_CHECK(cudaEventElapsedTime(&dense_exec_time, startCUBLAS, stopCUBLAS));
+    dense_exec_time /= test_iterations;
+    
+    std::vector<float> y_cublas(n, 0.0f);
+    CUDA_CHECK(cudaMemcpy(y_cublas.data(), d_y_cublas, n * sizeof(float), cudaMemcpyDeviceToHost));
+    
+    // Clean up cuBLAS resources.
+    cublasDestroy(handle_dense);
+    CUDA_CHECK(cudaFree(d_A_cublas));
+    CUDA_CHECK(cudaFree(d_x_cublas));
+    CUDA_CHECK(cudaFree(d_y_cublas));
+    CUDA_CHECK(cudaEventDestroy(startCUBLAS));
+    CUDA_CHECK(cudaEventDestroy(stopCUBLAS));
+    CUDA_CHECK(cudaEventDestroy(startCUBLAS_total));
+    CUDA_CHECK(cudaEventDestroy(stopCUBLAS_total));
     
     // ---------------------------
-    const int warmup_iters = 0;
+    // two-layer GPU with cuBLAS
+    const int warmup_iters = 5;
     for (int w = 0; w < warmup_iters; ++w) {
         std::vector<float> h_y(n, 0.0f);
         float* d_y = nullptr;
@@ -586,19 +676,6 @@ int main() {
     cublasHandle_t handle;
     CUBLAS_CHECK(cublasCreate(&handle));
 
-    // const int warmup_iters = 5;       // how many warm-up loops to run
-    // // 1) WARM-UP: do dense + low-rank loops but DON'T time them.
-    // for (int w = 0; w < warmup_iters; ++w) {
-    //     // Dense batch
-    //     CUBLAS_CHECK(cublasSgemvBatched(handle,
-    //         CUBLAS_OP_T, /*m=*/dense_blocks[0].m, /*n=*/dense_blocks[0].n,
-    //         &alpha, dA_dense, dense_blocks[0].m,
-    //         dx_dense, 1, &beta_one,
-    //         dy_dense, 1, denseBatch));
-    // }
-    // CUDA_CHECK(cudaDeviceSynchronize());
-    // CUDA_CHECK(cudaMemset(d_y, 0, n * sizeof(float)));
-
     float gpu_exec_time = 0.0f;
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
@@ -627,7 +704,7 @@ int main() {
     CUDA_CHECK(cudaEventElapsedTime(&ms_dense, start, stop));
     gpu_exec_time += ms_dense;
 
-    std::cout << "kernel time for denseMMM: " << ms_dense << " ms\n";
+    // std::cout << "kernel time for denseMMM: " << ms_dense << " ms\n";
 
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -729,7 +806,7 @@ int main() {
         CUDA_CHECK(cudaEventElapsedTime(&ms_lr, start, stop));
         gpu_exec_time += ms_lr;
 
-        std::cout << "kernel time for size " << m << ": " << ms_lr << " ms\n";
+        // std::cout << "kernel time for size " << m << ": " << ms_lr << " ms\n";
 
         CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -772,37 +849,59 @@ int main() {
 
     // ---------------------------
     // Print complete results and timings.    
-    std::cout << "CPU computation time: " << cpu_time.count() << " ms\n";
-    std::cout << "GPU kernel execution time: " << gpu_exec_time << " ms\n";
-    std::cout << "GPU total execution time: " << gpu_total_time << " ms\n";
+    // std::cout << "CPU computation time: " << cpu_time.count() << " ms\n";
+    // std::cout << "CUBLAS kernel execution time: " << dense_exec_time << " ms\n";
+    // std::cout << "CUBLAS total execution time: " << dense_total_time << " ms\n";
+    // std::cout << "GPU kernel execution time: " << gpu_exec_time << " ms\n";
+    // std::cout << "GPU total execution time: " << gpu_total_time << " ms\n";
 
     double relError_custom = computeRelative2NormError(y_cpu, h_y);
-    std::cout << "Relative 2-norm error (Custom GPU kernel vs CPU): " << relError_custom << "\n";
+    double relError_cublas = computeRelative2NormError(y_cpu, y_cublas);
+    // std::cout << "Relative 2-norm error (cuBLAS vs CPU): " << relError_cublas << "\n";
+    // std::cout << "Relative 2-norm error (Custom GPU kernel vs CPU): " << relError_custom << "\n";
 
     double gpu_seconds = gpu_exec_time * 1e-3;
-    double gflops = (double)total_ops / 1e9 / gpu_seconds;
+    double gpu_gflops = (double)total_ops / 1e9 / gpu_seconds;
 
-    std::cout << std::fixed << std::setprecision(2);
-    std::cout << "\n=== Performance Summary ===\n";
-    std::cout << std::setw(10) << "Stage"
-            << std::setw(15) << "Ops (x1e9)"
-            << std::setw(15) << "Time (ms)"
-            << std::setw(15) << "GFLOPs/s"
-            << "\n";
+    long long dense_total_ops = 2LL * n * n;
+    double dense_seconds = dense_exec_time * 1e-3;
+    double dense_gflops = (double)dense_total_ops / 1e9 / dense_seconds;
+
+    // std::cout << std::fixed << std::setprecision(2);
+    // std::cout << "\n=== Performance Summary ===\n";
+    // std::cout << std::setw(10) << "Stage"
+    //         << std::setw(15) << "Ops (x1e9)"
+    //         << std::setw(15) << "Time (ms)"
+    //         << std::setw(15) << "GFLOPs/s"
+    //         << "\n";
     
-    std::cout << std::setw(10) << "Total"
-    << std::setw(15) << (total_ops / 1e9)
-    << std::setw(15) << gpu_exec_time
-    << std::setw(15) << gflops
-    << "\n\n";
+    // std::cout << std::setw(10) << "GPU"
+    // << std::setw(15) << (total_ops / 1e9)
+    // << std::setw(15) << gpu_exec_time
+    // << std::setw(15) << gpu_gflops
+    // << "\n\n";
+
+    // std::cout << std::setw(10) << "cuBLAS"
+    // << std::setw(15) << (dense_total_ops / 1e9)
+    // << std::setw(15) << dense_exec_time
+    // << std::setw(15) << dense_gflops
+    // << "\n\n";
 
     std::cout
-      << n << ","    // matrix size
-      << globalKRank << ","
-      << cpu_time.count() << ","
-      << gpu_exec_time << ","
-      << gpu_total_time << ","
-      << gflops      << ","
+      << n << ','
+      << max_levels << ','
+      << fileKRank << ','
+    //   << std::fixed << std::setprecision(3)
+      << cpu_time.count() << ','
+      << dense_exec_time     << ','
+      << dense_total_time    << ','
+      << gpu_exec_time       << ','
+      << gpu_total_time      << ','
+      << (dense_total_ops    / 1e9) << ','
+      << (total_ops          / 1e9) << ','
+      << dense_gflops        << ','
+      << gpu_gflops          << ','
+      << relError_cublas     << ','
       << relError_custom
       << "\n";
     

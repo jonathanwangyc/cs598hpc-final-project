@@ -1,59 +1,99 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build (adjust to your build system)
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
-make -j
-
-BIN=./hodlr_mvm        # adjust to your binary name
+# -------------------
+# CONFIG
+# -------------------
+BIN=./benchmark_warmup       # path to your binary
 OUT=./results.csv
-RUNS=10                # number of repetitions per (n,k)
+RUNS=10                     # repetitions per (n,level,k)
 
-# CSV header
-echo "n,k,cpu_ms,kernel_ms,total_ms,gflops,rel_error" > "$OUT"
+# CSV header (14 fields)
+echo "n,max_levels,k, \
+cpu_ms, \
+cublas_kernel_ms, \
+cublas_total_ms, \
+gpu_kernel_ms, \
+gpu_total_ms, \
+ops_cublas, \
+ops_gpu, \
+gflops_cublas, \
+gflops_gpu, \
+relerr_cublas, \
+relerr_custom" > "$OUT"
 
-SIZES=(1024 2048 4096 8192 16384)
-KS=(5 10 15 20)
+# parameter lists
+# SIZES=(1024 2048 4096 8192 16384)
+# LEVELS=(4 6 8 10)
+# KS=(5 10 15 20)
 
+SIZES=(8192)
+LEVELS=(8)
+KS=(15)
+
+# -------------------
+# BENCHMARK LOOP
+# -------------------
 for n in "${SIZES[@]}"; do
-  # compute a reasonable max_level for HODLR; e.g. log2(n)-1
-  lvl=$(echo "l($n)/l(2)-1" | bc -l)
-  max_level=${lvl%.*}
+  for lvl in "${LEVELS[@]}"; do
+    for k in "${KS[@]}"; do
+      echo "Benchmarking n=$n, max_levels=$lvl, k=$k (averaging over $RUNS runs)"
 
-  for k in "${KS[@]}"; do
-    echo "→ benchmarking n=$n, k=$k  (averaging over $RUNS runs)"
+      # zero accumulators
+      sum_cpu=0
+      sum_ck=0
+      sum_ct=0
+      sum_gk=0
+      sum_gt=0
+      sum_ops_c=0
+      sum_ops_g=0
+      sum_gf_c=0
+      sum_gf_g=0
+      sum_re_cb=0
+      sum_re_cu=0
 
-    # accumulators
-    sum_cpu=0
-    sum_kernel=0
-    sum_total=0
-    sum_gflops=0
-    sum_err=0
+      for run in $(seq 1 $RUNS); do
+        # single CSV line from your program:
+        record=$("$BIN" "$n" "$lvl" "$k")
+        IFS=',' read -r rn r_lv r_k \
+          cpu_ms \
+          cbl_k_ms cbl_t_ms \
+          gpu_k_ms gpu_t_ms \
+          ops_c ops_g \
+          gf_c gf_g \
+          re_cb re_cu <<< "$record"
 
-    for run in $(seq 1 $RUNS); do
-      # one single-record CSV line from your program:
-      record=$("$BIN" "$n" "$max_level" "$k")
-      # split into fields
-      IFS=',' read -r rn rk cpu_ms kernel_ms total_ms gflops relerr <<< "$record"
+        sum_cpu=$(awk -v a="$sum_cpu"  -v b="$cpu_ms"   'BEGIN{ printf "%.3f", a+b }')
+        sum_ck=$(awk -v a="$sum_ck"   -v b="$cbl_k_ms" 'BEGIN{ printf "%.3f", a+b }')
+        sum_ct=$(awk -v a="$sum_ct"   -v b="$cbl_t_ms" 'BEGIN{ printf "%.3f", a+b }')
+        sum_gk=$(awk -v a="$sum_gk"   -v b="$gpu_k_ms"  'BEGIN{ printf "%.3f", a+b }')
+        sum_gt=$(awk -v a="$sum_gt"   -v b="$gpu_t_ms"  'BEGIN{ printf "%.3f", a+b }')
+        sum_ops_c=$(awk -v a="$sum_ops_c" -v b="$ops_c" 'BEGIN{ printf "%.0f", a+b }')
+        sum_ops_g=$(awk -v a="$sum_ops_g" -v b="$ops_g" 'BEGIN{ printf "%.0f", a+b }')
+        sum_gf_c=$(awk -v a="$sum_gf_c" -v b="$gf_c"   'BEGIN{ printf "%.3f", a+b }')
+        sum_gf_g=$(awk -v a="$sum_gf_g" -v b="$gf_g"   'BEGIN{ printf "%.3f", a+b }')
+        sum_re_cb=$(awk -v a="$sum_re_cb" -v b="$re_cb" 'BEGIN{ printf "%.6f", a+b }')
+        sum_re_cu=$(awk -v a="$sum_re_cu" -v b="$re_cu" 'BEGIN{ printf "%.6f", a+b }')
+      done
 
-      sum_cpu=$(echo "$sum_cpu + $cpu_ms" | bc)
-      sum_kernel=$(echo "$sum_kernel + $kernel_ms" | bc)
-      sum_total=$(echo "$sum_total + $total_ms" | bc)
-      sum_gflops=$(echo "$sum_gflops + $gflops" | bc)
-      sum_err=$(echo "$sum_err + $relerr" | bc)
+      # compute averages (3 decimal places for times, GFLOPs; 6 for errors)
+      avg_cpu=$(awk -v s="$sum_cpu" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_ck=$(awk -v s="$sum_ck"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_ct=$(awk -v s="$sum_ct"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_gk=$(awk -v s="$sum_gk"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_gt=$(awk -v s="$sum_gt"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_ops_c=$(awk -v s="$sum_ops_c" -v r="$RUNS" 'BEGIN{ printf "%.0f", s/r }')
+      avg_ops_g=$(awk -v s="$sum_ops_g" -v r="$RUNS" 'BEGIN{ printf "%.0f", s/r }')
+      avg_gf_c=$(awk -v s="$sum_gf_c" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_gf_g=$(awk -v s="$sum_gf_g" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      avg_re_cb=$(awk -v s="$sum_re_cb" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_re_cu=$(awk -v s="$sum_re_cu" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+
+      # append aggregated line
+      echo "$n,$lvl,$k,$avg_cpu,$avg_ck,$avg_ct,$avg_gk,$avg_gt,$avg_ops_c,$avg_ops_g,$avg_gf_c,$avg_gf_g,$avg_re_cb,$avg_re_cu" \
+        >> "$OUT"
     done
-
-    # compute averages (with 3 decimal places)
-    avg_cpu=$(echo "scale=3; $sum_cpu / $RUNS" | bc)
-    avg_kernel=$(echo "scale=3; $sum_kernel / $RUNS" | bc)
-    avg_total=$(echo "scale=3; $sum_total / $RUNS" | bc)
-    avg_gflops=$(echo "scale=3; $sum_gflops / $RUNS" | bc)
-    avg_err=$(echo "scale=3; $sum_err / $RUNS" | bc)
-
-    # append to CSV
-    echo "$n,$k,$avg_cpu,$avg_kernel,$avg_total,$avg_gflops,$avg_err" >> "$OUT"
   done
 done
 
-echo "→ done. aggregated results in $OUT"
+echo "Done. aggregated results in $OUT"

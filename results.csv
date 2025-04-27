@@ -1,0 +1,2 @@
+n,max_levels,k, cpu_ms, cublas_kernel_ms, cublas_total_ms, gpu_kernel_ms, gpu_total_ms, ops_cublas, ops_gpu, gflops_cublas, gflops_gpu, relerr_cublas, relerr_custom
+8192,8,15,64.220,0.457,54.328,0.220,17.198,0,0,294.021,20.234,0.000002,0.000002
