@@ -4,9 +4,9 @@ set -euo pipefail
 # -------------------
 # CONFIG
 # -------------------
-BIN=./benchmark_warmup       # path to your binary
-OUT=./results.csv
-RUNS=10                     # repetitions per (n,level,k)
+BIN=./benchmark_nowarmup      # path to your binary
+OUT=./results_nowarmup.csv
+RUNS=8                        # repetitions per (n,level,k)
 
 # CSV header (14 fields)
 echo "n,max_levels,k, \
@@ -23,13 +23,9 @@ relerr_cublas, \
 relerr_custom" > "$OUT"
 
 # parameter lists
-# SIZES=(1024 2048 4096 8192 16384)
-# LEVELS=(4 6 8 10)
-# KS=(5 10 15 20)
-
-SIZES=(8192)
-LEVELS=(8)
-KS=(15)
+SIZES=(128 256 512 1024 2048 4096 8192 16384 32768)
+LEVELS=(2 4 6 8 10 12)
+KS=(6 8 10 12 14 16 18)
 
 # -------------------
 # BENCHMARK LOOP
@@ -63,31 +59,31 @@ for n in "${SIZES[@]}"; do
           gf_c gf_g \
           re_cb re_cu <<< "$record"
 
-        sum_cpu=$(awk -v a="$sum_cpu"  -v b="$cpu_ms"   'BEGIN{ printf "%.3f", a+b }')
-        sum_ck=$(awk -v a="$sum_ck"   -v b="$cbl_k_ms" 'BEGIN{ printf "%.3f", a+b }')
-        sum_ct=$(awk -v a="$sum_ct"   -v b="$cbl_t_ms" 'BEGIN{ printf "%.3f", a+b }')
-        sum_gk=$(awk -v a="$sum_gk"   -v b="$gpu_k_ms"  'BEGIN{ printf "%.3f", a+b }')
-        sum_gt=$(awk -v a="$sum_gt"   -v b="$gpu_t_ms"  'BEGIN{ printf "%.3f", a+b }')
+        sum_cpu=$(awk -v a="$sum_cpu"  -v b="$cpu_ms"   'BEGIN{ printf "%.6f", a+b }')
+        sum_ck=$(awk -v a="$sum_ck"   -v b="$cbl_k_ms" 'BEGIN{ printf "%.6f", a+b }')
+        sum_ct=$(awk -v a="$sum_ct"   -v b="$cbl_t_ms" 'BEGIN{ printf "%.6f", a+b }')
+        sum_gk=$(awk -v a="$sum_gk"   -v b="$gpu_k_ms"  'BEGIN{ printf "%.6f", a+b }')
+        sum_gt=$(awk -v a="$sum_gt"   -v b="$gpu_t_ms"  'BEGIN{ printf "%.6f", a+b }')
         sum_ops_c=$(awk -v a="$sum_ops_c" -v b="$ops_c" 'BEGIN{ printf "%.0f", a+b }')
         sum_ops_g=$(awk -v a="$sum_ops_g" -v b="$ops_g" 'BEGIN{ printf "%.0f", a+b }')
-        sum_gf_c=$(awk -v a="$sum_gf_c" -v b="$gf_c"   'BEGIN{ printf "%.3f", a+b }')
-        sum_gf_g=$(awk -v a="$sum_gf_g" -v b="$gf_g"   'BEGIN{ printf "%.3f", a+b }')
-        sum_re_cb=$(awk -v a="$sum_re_cb" -v b="$re_cb" 'BEGIN{ printf "%.6f", a+b }')
-        sum_re_cu=$(awk -v a="$sum_re_cu" -v b="$re_cu" 'BEGIN{ printf "%.6f", a+b }')
+        sum_gf_c=$(awk -v a="$sum_gf_c" -v b="$gf_c"   'BEGIN{ printf "%.6f", a+b }')
+        sum_gf_g=$(awk -v a="$sum_gf_g" -v b="$gf_g"   'BEGIN{ printf "%.6f", a+b }')
+        sum_re_cb=$(awk -v a="$sum_re_cb" -v b="$re_cb" 'BEGIN{ printf "%.9f", a+b }')
+        sum_re_cu=$(awk -v a="$sum_re_cu" -v b="$re_cu" 'BEGIN{ printf "%.9f", a+b }')
       done
 
-      # compute averages (3 decimal places for times, GFLOPs; 6 for errors)
-      avg_cpu=$(awk -v s="$sum_cpu" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_ck=$(awk -v s="$sum_ck"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_ct=$(awk -v s="$sum_ct"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_gk=$(awk -v s="$sum_gk"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_gt=$(awk -v s="$sum_gt"  -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
+      # compute averages (6 decimal places for times, GFLOPs; 9 for errors)
+      avg_cpu=$(awk -v s="$sum_cpu" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_ck=$(awk -v s="$sum_ck"  -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_ct=$(awk -v s="$sum_ct"  -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_gk=$(awk -v s="$sum_gk"  -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_gt=$(awk -v s="$sum_gt"  -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
       avg_ops_c=$(awk -v s="$sum_ops_c" -v r="$RUNS" 'BEGIN{ printf "%.0f", s/r }')
       avg_ops_g=$(awk -v s="$sum_ops_g" -v r="$RUNS" 'BEGIN{ printf "%.0f", s/r }')
-      avg_gf_c=$(awk -v s="$sum_gf_c" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_gf_g=$(awk -v s="$sum_gf_g" -v r="$RUNS" 'BEGIN{ printf "%.3f", s/r }')
-      avg_re_cb=$(awk -v s="$sum_re_cb" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
-      avg_re_cu=$(awk -v s="$sum_re_cu" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_gf_c=$(awk -v s="$sum_gf_c" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_gf_g=$(awk -v s="$sum_gf_g" -v r="$RUNS" 'BEGIN{ printf "%.6f", s/r }')
+      avg_re_cb=$(awk -v s="$sum_re_cb" -v r="$RUNS" 'BEGIN{ printf "%.9f", s/r }')
+      avg_re_cu=$(awk -v s="$sum_re_cu" -v r="$RUNS" 'BEGIN{ printf "%.9f", s/r }')
 
       # append aggregated line
       echo "$n,$lvl,$k,$avg_cpu,$avg_ck,$avg_ct,$avg_gk,$avg_gt,$avg_ops_c,$avg_ops_g,$avg_gf_c,$avg_gf_g,$avg_re_cb,$avg_re_cu" \

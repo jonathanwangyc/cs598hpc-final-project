@@ -391,7 +391,7 @@ int main(int argc, char* argv[]) {
     float alpha_cublas = 1.0f, beta_cublas = 0.0f;
     
     // --- Warm Up Phase ---
-    int warmup_iterations = 5;
+    int warmup_iterations = 0;
     for (int i = 0; i < warmup_iterations; i++) {
         stat = cublasSgemv(handle_dense, CUBLAS_OP_N, n, n, &alpha_cublas, d_A_cublas, n,
                            d_x_cublas, 1, &beta_cublas, d_y_cublas, 1);
@@ -445,7 +445,7 @@ int main(int argc, char* argv[]) {
     
     // ---------------------------
     // two-layer GPU with cuBLAS
-    const int warmup_iters = 5;
+    const int warmup_iters = 0;
     for (int w = 0; w < warmup_iters; ++w) {
         std::vector<float> h_y(n, 0.0f);
         float* d_y = nullptr;

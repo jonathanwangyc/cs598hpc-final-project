@@ -8,7 +8,7 @@ df = pd.read_csv("results.csv")
 # 2) Pivot GFLOP/s vs n for each k
 pivot = df.pivot(index="n", columns="k", values="gflops")
 pivot.plot(marker="o")
-plt.title("HODLR‐MVM GFLOP/s vs matrix size")
+plt.title("HODLR-MVM GFLOP/s vs matrix size")
 plt.xlabel("n")
 plt.ylabel("GFLOP/s")
 plt.xscale("log", base=2)
