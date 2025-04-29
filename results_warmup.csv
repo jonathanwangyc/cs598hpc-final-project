@@ -1,4 +1,4 @@
-n,max_levels,k, cpu_ms, cublas_kernel_ms, cublas_total_ms, gpu_kernel_ms, gpu_total_ms, ops_cublas, ops_gpu, gflops_cublas, gflops_gpu, relerr_cublas, relerr_custom
+n,max_levels,k,cpu_ms,cublas_kernel_ms,cublas_total_ms,gpu_kernel_ms,gpu_total_ms,ops_cublas,ops_gpu,gflops_cublas,gflops_gpu,relerr_cublas,relerr_custom
 128,2,6,0.014861,0.021372,24.512375,0.059396,0.507136,32768,14336,1.547251,0.243122,0.000000208,0.000000218
 128,2,8,0.013337,0.022016,24.007313,0.060676,0.484868,32768,16384,1.492209,0.270950,0.000000205,0.000000225
 128,2,10,0.012205,0.020224,21.651325,0.056448,0.476416,32768,18432,1.624227,0.327194,0.000000207,0.000000218

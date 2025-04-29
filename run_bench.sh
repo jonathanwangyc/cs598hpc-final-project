@@ -5,21 +5,21 @@ set -euo pipefail
 # CONFIG
 # -------------------
 BIN=./benchmark_nowarmup      # path to your binary
-OUT=./results_nowarmup.csv
+OUT=./results.csv
 RUNS=8                        # repetitions per (n,level,k)
 
 # CSV header (14 fields)
-echo "n,max_levels,k, \
-cpu_ms, \
-cublas_kernel_ms, \
-cublas_total_ms, \
-gpu_kernel_ms, \
-gpu_total_ms, \
-ops_cublas, \
-ops_gpu, \
-gflops_cublas, \
-gflops_gpu, \
-relerr_cublas, \
+echo "n,max_levels,k,\
+cpu_ms,\
+cublas_kernel_ms,\
+cublas_total_ms,\
+gpu_kernel_ms,\
+gpu_total_ms,\
+ops_cublas,\
+ops_gpu,\
+gflops_cublas,\
+gflops_gpu,\
+relerr_cublas,\
 relerr_custom" > "$OUT"
 
 # parameter lists
